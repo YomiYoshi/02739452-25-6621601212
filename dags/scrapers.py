@@ -80,6 +80,38 @@ def guess_brand(name):
     return rest[0] if rest else "UNKNOWN"
 
 
+_COLOR_WORDS = {
+    "BLACK", "WHITE", "BLUE", "RED", "GREEN", "PINK", "PURPLE", "GRAY", "GREY", "SILVER", "GOLD",
+    "BEIGE", "NAVY", "YELLOW", "ORANGE", "BROWN", "CREAM", "MINT", "LAVENDER", "IVORY", "TITANIUM",
+    "MIDNIGHT", "STARLIGHT", "SAND", "STONE", "ROSE", "DARK", "LIGHT", "SKY", "COLOR",
+}
+_GENERIC_WORDS = _PREFIX_WORDS | {"WITH", "MIC", "NOISE", "CANCELLING", "CANCELING", "ANC", "THE"}
+
+
+def make_match_key(brand, name):
+    """คีย์สำหรับจับคู่สินค้าข้ามร้าน: BRAND|รุ่น (ตัดวงเล็บ ภาษาไทย สี รหัสสินค้า และคำทั่วไป)
+
+    เช่น JIB  'TRUE WIRELESS HEADPHONE (หูฟังทรูไวร์เลส) REDMI BUDS 6 PLAY (WHITE) (57676)'
+         Banana 'หูฟังไร้สาย Redmi Buds 6 Play'
+    -> 'REDMI|BUDS 6 PLAY' ทั้งคู่
+    """
+    brand = (brand or "UNKNOWN").upper()
+    text = re.sub(r"\([^)]*\)", " ", (name or "").upper())
+    text = re.split(r"\s-\s", text)[0]  # ตัดส่วนท้าย ' - WHITE BHR08UHGL'
+    tokens = re.findall(r"[A-Z0-9][A-Z0-9+.]*", text)
+    model = [
+        t for t in tokens
+        if t != brand and t not in _GENERIC_WORDS and t not in _COLOR_WORDS
+        and not re.fullmatch(r"\d{5,}", t)  # รหัสสินค้า/บาร์โค้ด
+    ]
+    return f"{brand}|{' '.join(model[:4])}"
+
+
+def scrape_jib_page(offset):
+    """ดึง 1 หน้ารายการหมวดหูฟังไร้สายของ JIB (ใช้กับ Dynamic Task Mapping)"""
+    return scrape_jib(offsets=[offset])
+
+
 def scrape_jib(offsets=None):
     """ดึงหน้ารายการหมวดหูฟังไร้สายของ JIB"""
     records = []
