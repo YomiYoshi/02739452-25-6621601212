@@ -1,7 +1,8 @@
 """
 Streamlit dashboard — อ่านข้อมูลจาก PostgreSQL โดยตรง
-- หน้า "ราคาหูฟัง": KPI + ตัวกรอง + ตาราง + กราฟ (ตาราง products / วิว products_dedup)
-- หน้า "Pipeline Status": ประวัติการรัน (pipeline_runs) + สถานะ task ล่าสุดจาก metadata DB ของ Airflow
+เมนูและตัวกรองทั้งหมดอยู่บนหน้าหลัก (ไม่ใช้ sidebar)
+- แท็บ "ราคาหูฟัง": แผงตัวกรอง + KPI + กราฟ + ตาราง (ตาราง products / วิว products_dedup)
+- แท็บ "Pipeline Status": ประวัติการรัน (pipeline_runs) + สถานะ task ล่าสุดจาก metadata DB ของ Airflow
 """
 
 import os
@@ -11,7 +12,8 @@ import plotly.express as px
 import psycopg2
 import streamlit as st
 
-st.set_page_config(page_title="เปรียบเทียบราคาหูฟังไร้สาย", page_icon="🎧", layout="wide")
+st.set_page_config(page_title="เปรียบเทียบราคาหูฟังไร้สาย", page_icon="🎧", layout="wide",
+                   initial_sidebar_state="collapsed")
 
 SOURCE_LABELS = {"jib": "JIB", "banana": "Banana IT", "speedcom": "Speed Computer"}
 
@@ -32,39 +34,52 @@ def query(sql, dbname=None):
         return pd.read_sql(sql, conn)
 
 
-def page_prices():
-    st.title("🎧 วิเคราะห์และเปรียบเทียบราคาหูฟังไร้สาย (TWS / ครอบหู) 500–5,000 บาท")
-    st.caption("แหล่งข้อมูล: JIB · Banana IT · Speed Computer — อ่านจาก PostgreSQL โดยตรง (cache 60 วินาที)")
-
-    dedup = st.sidebar.toggle("ตัดรายการซ้ำข้ามร้าน (เลือกร้านที่ถูกสุด)", value=False,
-                              help="ใช้วิว products_dedup: รุ่นเดียวกันจากหลายร้านจะเหลือแถวเดียว")
+def load_products(dedup):
     table = "products_dedup" if dedup else "products"
-    try:
-        df = query(f"SELECT source, product_id, name, brand, price::float AS price, url, scraped_at, match_key "
-                   f"FROM {table} ORDER BY price")
-    except Exception as exc:  # ยังไม่มีตาราง (DAG ยังไม่เคยรัน) หรือ DB ยังไม่พร้อม
-        st.warning(f"ยังอ่านข้อมูลไม่ได้ — ให้รัน DAG `headphone_price_dag` ก่อน ({exc.__class__.__name__})")
-        st.stop()
-    if df.empty:
-        st.info("ตารางยังว่าง")
-        st.stop()
+    df = query(f"SELECT source, product_id, name, brand, price::float AS price, url, scraped_at, match_key "
+               f"FROM {table} ORDER BY price")
     df["shop"] = df["source"].map(SOURCE_LABELS).fillna(df["source"])
+    return df
 
-    # ---------- ตัวกรอง ----------
-    st.sidebar.header("ตัวกรอง")
-    shops = st.sidebar.multiselect("ร้าน", sorted(df["shop"].unique()), default=sorted(df["shop"].unique()))
-    brands = st.sidebar.multiselect("แบรนด์", sorted(df["brand"].dropna().unique()))
-    lo, hi = st.sidebar.slider("ช่วงราคา (บาท)", 500, 5000, (500, 5000), step=100)
-    keyword = st.sidebar.text_input("ค้นหาชื่อรุ่น")
+
+def filter_panel(df):
+    """แผงตัวกรองบนหน้าหลัก -> คืน DataFrame ที่กรองแล้ว"""
+    with st.container(border=True):
+        st.markdown("**🔎 ตัวกรอง**")
+        c1, c2, c3 = st.columns([2, 3, 3])
+        all_shops = sorted(df["shop"].unique())
+        shops = c1.multiselect("ร้าน", all_shops, default=all_shops)
+        brands = c2.multiselect("แบรนด์ (ไม่เลือก = ทุกแบรนด์)", sorted(df["brand"].dropna().unique()))
+        lo, hi = c3.slider("ช่วงราคา (บาท)", 500, 5000, (500, 5000), step=100)
+        keyword = st.text_input("ค้นหาชื่อรุ่น", placeholder="เช่น Buds, WH-CH520, Soundcore")
 
     view = df[df["shop"].isin(shops) & df["price"].between(lo, hi)]
     if brands:
         view = view[view["brand"].isin(brands)]
     if keyword:
         view = view[view["name"].str.contains(keyword, case=False, na=False, regex=False)]
+    return view
+
+
+def page_prices():
+    top_left, top_right = st.columns([3, 1])
+    dedup = top_left.toggle("ตัดรายการซ้ำข้ามร้าน (เลือกร้านที่ถูกสุด)", value=False,
+                            help="ใช้วิว products_dedup: รุ่นเดียวกันจากหลายร้านจะเหลือแถวเดียว")
+    try:
+        df = load_products(dedup)
+    except Exception as exc:  # ยังไม่มีตาราง (DAG ยังไม่เคยรัน) หรือ DB ยังไม่พร้อม
+        st.warning(f"ยังอ่านข้อมูลไม่ได้ — ให้รัน DAG `headphone_price_dag` ก่อน ({exc.__class__.__name__})")
+        return
+    if df.empty:
+        st.info("ตารางยังว่าง")
+        return
+    last = pd.to_datetime(df["scraped_at"]).max()
+    top_right.caption(f"อัปเดตล่าสุด: {last.tz_convert('Asia/Bangkok'):%Y-%m-%d %H:%M} (เวลาไทย)")
+
+    view = filter_panel(df)
     if view.empty:
         st.info("ไม่มีสินค้าตรงตัวกรอง")
-        st.stop()
+        return
 
     # ---------- KPI ----------
     c1, c2, c3, c4, c5 = st.columns(5)
@@ -73,8 +88,6 @@ def page_prices():
     c3.metric("ราคามัธยฐาน", f"฿{view['price'].median():,.0f}")
     c4.metric("ถูกที่สุด", f"฿{view['price'].min():,.0f}")
     c5.metric("จำนวนแบรนด์", f"{view['brand'].nunique():,}")
-    last = pd.to_datetime(view["scraped_at"]).max()
-    st.caption(f"อัปเดตล่าสุด: {last.tz_convert('Asia/Bangkok'):%Y-%m-%d %H:%M} (เวลาไทย)")
 
     # ---------- กราฟ ----------
     left, right = st.columns(2)
@@ -113,7 +126,6 @@ def page_prices():
 
 
 def page_status():
-    st.title("⚙️ Pipeline Status")
     st.caption("ประวัติการรัน DAG `headphone_price_dag` (ตาราง pipeline_runs) และสถานะ task ล่าสุดจาก Airflow")
     try:
         runs = query("SELECT run_id, status, started_at, finished_at, raw_counts::text AS raw_counts, "
@@ -143,7 +155,8 @@ def page_status():
         tis = query(
             "SELECT task_id, map_index, state, start_date, end_date, try_number FROM task_instance "
             "WHERE dag_id = 'headphone_price_dag' AND run_id = ("
-            "  SELECT run_id FROM dag_run WHERE dag_id = 'headphone_price_dag' ORDER BY start_date DESC LIMIT 1) "
+            "  SELECT run_id FROM dag_run WHERE dag_id = 'headphone_price_dag' "
+            "  ORDER BY start_date DESC NULLS LAST LIMIT 1) "
             "ORDER BY start_date NULLS LAST, task_id, map_index",
             dbname=os.getenv("AIRFLOW_DB_NAME", "airflow"),
         )
@@ -152,7 +165,15 @@ def page_status():
         st.info(f"อ่าน metadata ของ Airflow ไม่ได้ ({exc.__class__.__name__})")
 
 
-page = st.sidebar.radio("หน้า", ["ราคาหูฟัง", "Pipeline Status"])
-if st.sidebar.button("รีเฟรชข้อมูล"):
+# ---------- ส่วนหัว: ชื่อ + ปุ่มรีเฟรช + เมนูแท็บ (อยู่บนหน้าหลักทั้งหมด) ----------
+head_left, head_right = st.columns([5, 1], vertical_alignment="center")
+head_left.title("🎧 วิเคราะห์และเปรียบเทียบราคาหูฟังไร้สาย (TWS / ครอบหู) 500–5,000 บาท")
+head_left.caption("แหล่งข้อมูล: JIB · Banana IT · Speed Computer — อ่านจาก PostgreSQL โดยตรง (cache 60 วินาที)")
+if head_right.button("🔄 รีเฟรชข้อมูล", use_container_width=True):
     st.cache_data.clear()
-(page_prices if page == "ราคาหูฟัง" else page_status)()
+
+tab_prices, tab_status = st.tabs(["📊 ราคาหูฟัง", "⚙️ Pipeline Status"])
+with tab_prices:
+    page_prices()
+with tab_status:
+    page_status()
