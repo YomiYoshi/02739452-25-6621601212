@@ -13,7 +13,7 @@ import streamlit as st
 
 st.set_page_config(page_title="เปรียบเทียบราคาหูฟังไร้สาย", page_icon="🎧", layout="wide")
 
-SOURCE_LABELS = {"jib": "JIB", "banana": "Banana IT", "advice": "Advice"}
+SOURCE_LABELS = {"jib": "JIB", "banana": "Banana IT", "speedcom": "Speed Computer"}
 
 
 def get_conn(dbname=None):
@@ -34,7 +34,7 @@ def query(sql, dbname=None):
 
 def page_prices():
     st.title("🎧 วิเคราะห์และเปรียบเทียบราคาหูฟังไร้สาย (TWS / ครอบหู) 500–5,000 บาท")
-    st.caption("แหล่งข้อมูล: JIB · Banana IT — อ่านจาก PostgreSQL โดยตรง (cache 60 วินาที)")
+    st.caption("แหล่งข้อมูล: JIB · Banana IT · Speed Computer — อ่านจาก PostgreSQL โดยตรง (cache 60 วินาที)")
 
     dedup = st.sidebar.toggle("ตัดรายการซ้ำข้ามร้าน (เลือกร้านที่ถูกสุด)", value=False,
                               help="ใช้วิว products_dedup: รุ่นเดียวกันจากหลายร้านจะเหลือแถวเดียว")

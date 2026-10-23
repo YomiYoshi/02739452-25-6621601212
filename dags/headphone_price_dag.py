@@ -2,7 +2,8 @@
 headphone_price_dag.py — ราคาหูฟังไร้สาย (TWS / ครอบหู) ช่วง 500-5,000 บาท
 
 start
-  -> [TaskGroup extract]  extract_jib (Dynamic Task Mapping ตามหน้า) || extract_banana   (รันขนานกัน)
+  -> [TaskGroup extract]  extract_jib (Dynamic Task Mapping ตามหน้า) || extract_banana || extract_speedcom
+                          (รันขนานกัน)
   -> transform            (trigger_rule=all_done: แหล่งไหนล่มก็รวมจากแหล่งที่เหลือต่อ)
   -> quality_check        (Branch: ผ่าน -> load_path / ไม่ผ่าน -> quarantine)
        -> create_table -> load (UPSERT) -> refresh_dedup -> verify
@@ -29,7 +30,7 @@ from airflow.utils.task_group import TaskGroup
 from airflow.utils.trigger_rule import TriggerRule
 from psycopg2.extras import execute_values
 
-from scrapers import JIB_OFFSETS, make_match_key, scrape_banana, scrape_jib_page
+from scrapers import JIB_OFFSETS, make_match_key, scrape_banana, scrape_jib_page, scrape_speedcom
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,7 @@ POSTGRES_CONN_ID = "headphones_db"
 TABLE = "products"
 PRICE_MIN, PRICE_MAX = 500, 5000
 MIN_ROWS = 100
-SOURCES = ["jib", "banana"]
+SOURCES = ["jib", "banana", "speedcom"]
 COLUMNS = ["source", "product_id", "name", "brand", "price", "url", "scraped_at", "match_key"]
 # Banana หมวด "หูฟัง" มีหูฟังแบบมีสายปนอยู่ -> ตัดออกให้เหลือเฉพาะไร้สาย
 WIRED_PATTERN = re.compile(r"\bWIRED\b|มีสาย|3\.5\s?MM|USB-C EARPHONE", re.IGNORECASE)
@@ -75,6 +76,15 @@ def extract_banana(**context):
     return records
 
 
+def extract_speedcom(**context):
+    _check_simulated_down("speedcom")
+    records = scrape_speedcom()
+    if not records:
+        raise ValueError("Speedcom: ไม่พบสินค้า — โครงสร้างเว็บอาจเปลี่ยน")
+    logger.info("extract_speedcom: %d rows", len(records))
+    return records
+
+
 # ---------------- transform ----------------
 def _pull_source(ti, task_id):
     """ดึง XCom ของแหล่งหนึ่ง; task ที่ fail จะไม่มี XCom -> ได้ list ว่าง"""
@@ -93,6 +103,7 @@ def transform(**context):
     raw = {
         "jib": _pull_source(ti, "extract.extract_jib"),
         "banana": _pull_source(ti, "extract.extract_banana"),
+        "speedcom": _pull_source(ti, "extract.extract_speedcom"),
     }
     raw_counts = {src: len(rows) for src, rows in raw.items()}
     logger.info("transform: raw rows per source = %s", raw_counts)
@@ -111,6 +122,8 @@ def transform(**context):
         seen.add(key)
         name = " ".join(row["name"].split())
         brand = (row.get("brand") or "UNKNOWN").strip().upper()
+        if "SOUNDCORE" in name.upper():  # Anker Soundcore: ร้านใช้ชื่อแบรนด์ต่างกัน
+            brand = "SOUNDCORE"
         clean.append({
             "source": row["source"],
             "product_id": str(row["product_id"]),
@@ -289,7 +302,7 @@ def log_run(**context):
 with DAG(
     dag_id="headphone_price_dag",
     default_args=default_args,
-    description="ราคาหูฟังไร้สาย 500-5,000 บาท: JIB + Banana IT -> transform -> quality -> PostgreSQL",
+    description="เปรียบเทียบราคาหูฟังไร้สาย 500-5,000 บาท: JIB + Banana IT + Speed Computer -> PostgreSQL",
     schedule="@daily",
     start_date=datetime(2026, 10, 1),
     catchup=False,
@@ -304,6 +317,7 @@ with DAG(
             task_id="extract_jib", python_callable=extract_jib,
         ).expand(op_kwargs=[{"offset": o} for o in JIB_OFFSETS])
         t_banana = PythonOperator(task_id="extract_banana", python_callable=extract_banana)
+        t_speedcom = PythonOperator(task_id="extract_speedcom", python_callable=extract_speedcom)
 
     t_transform = PythonOperator(
         task_id="transform", python_callable=transform,

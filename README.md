@@ -13,17 +13,19 @@ dashboard ใช้วิเคราะห์ราคาตามแบรน�
 |---|---|---|---|
 | `jib` | JIB | https://www.jib.co.th/web/product/product_list/2/1494 (หมวดหูฟังไร้สาย, หน้า `/0` `/100` `/200`) | requests + BeautifulSoup |
 | `banana` | Banana IT | https://www.bnn.in.th/th/p/home-entertainment/headphone (`?page=1..12`, รวม TWS + ครอบหู) | requests + BeautifulSoup |
-| `advice` | Advice | https://www.advice.co.th/product/small-talk-bluetooth/true-wireless-in-ear- | **ยังดึงไม่ได้** — ดูหมายเหตุด้านล่าง |
+| `speedcom` | Speed Computer | https://www.speedcom.co.th/collections/headphone (`?page=1..12`, เก็บเฉพาะรุ่นไร้สาย) | requests + BeautifulSoup |
 
-**หมายเหตุ Advice:** หน้า category ของ Advice โหลดรายการสินค้าฝั่ง browser ผ่าน API แบบ `POST /_advice-api/.../product/get`
-ซึ่งต้องใช้ Bearer token (ถ้าไม่มีจะได้ `401 Unauthorized`) และใน HTML ที่ server ส่งมาไม่มีรายการสินค้าเลย
-จึงดึงด้วย requests + BeautifulSoup แบบตรงไปตรงมาไม่ได้ และเราไม่หลบการยืนยันตัวตนของเว็บ
+**หมายเหตุ: เปลี่ยนแหล่งที่ 3 จาก Advice เป็น Speed Computer**
+หน้า category ของ Advice (https://www.advice.co.th/product/small-talk-bluetooth/true-wireless-in-ear-) ไม่มีรายการสินค้าอยู่ใน HTML ที่ server ส่งมา
+เพราะ browser โหลดรายการสินค้าภายหลังผ่าน API `POST /_advice-api/api/v1.0.0/product/get` ซึ่งต้องใช้ Bearer token
+(ถ้ายิงโดยไม่มี token จะได้ `401 Unauthorized`) จึงดึงด้วย requests + BeautifulSoup ไม่ได้ และเราไม่หลบการยืนยันตัวตนของเว็บ
+ส่วน Speed Computer เป็นร้าน IT ที่ render รายการสินค้ามาใน HTML จาก server แล้ว จึงใช้แทน
 
 **จริยธรรมในการ scrape**
 - ตรวจ `robots.txt` ของทุกเว็บแล้ว:
   - JIB `Disallow` เฉพาะ `/login`, `/signin`, `/backoffice` ฯลฯ
   - Banana IT ระบุ `Disallow:` ว่าง
-  - Advice อนุญาต `*.html`/`*.php`
+  - Speed Computer ห้ามเฉพาะ `/cart`, `/checkout`, `/account` และ URL ที่มี `sort_by` (เราใช้แค่ `?page=N`)
   - หน้าที่เราดึงเป็นหน้ารายการสินค้า ไม่อยู่ในส่วนที่ห้าม
 - ใส่ User-Agent ที่บอกตัวตน (`KU-BigData-Exam-Scraper/1.0; academic use`), timeout และหน่วงเวลา **2 วินาที** ระหว่าง request
 - จำกัดจำนวนหน้าที่ดึง และไม่ใช้ Selenium
@@ -35,7 +37,7 @@ dashboard ใช้วิเคราะห์ราคาตามแบรน�
 
 | column | type | หมายเหตุ |
 |---|---|---|
-| source | TEXT | `jib` / `banana` |
+| source | TEXT | `jib` / `banana` / `speedcom` |
 | product_id | TEXT | รหัสสินค้าของร้าน (ดึงจาก URL) |
 | name | TEXT | ชื่อสินค้า |
 | brand | TEXT | แบรนด์ (ใช้ label ของร้าน ถ้าไม่มีให้เดาจากชื่อ) |
@@ -54,7 +56,8 @@ dashboard ใช้วิเคราะห์ราคาตามแบรน�
 start
  └─ [TaskGroup extract]  (รันขนานกัน)
       ├─ extract_jib      ← Dynamic Task Mapping: 1 task ต่อ 1 หน้า (/0 /100 /200)
-      └─ extract_banana
+      ├─ extract_banana
+      └─ extract_speedcom
  └─ transform            trigger_rule=all_done → แหล่งใดล่ม ยังรวมข้อมูลจากแหล่งที่เหลือต่อได้
  └─ quality_check        BranchPythonOperator
       ├─ ผ่าน → [TaskGroup load_path] create_table → load (UPSERT) → refresh_dedup → verify
@@ -75,7 +78,7 @@ start
 
 | run | ผลลัพธ์ |
 |---|---|
-| ปกติ | JIB 173 + Banana 143 = **316 แถว** · วิว dedup เหลือ 240 รุ่น · พบรุ่นที่มีขายทั้ง 2 ร้าน 3 รุ่น |
+| ปกติ (3 แหล่ง) | JIB 175 + Banana 143 + Speed Computer 47 = **365 แถว** · วิว dedup เหลือ 288 รุ่น |
 | รัน `load` ซ้ำด้วย batch เดิม 2 ครั้ง | upsert 318 แถวทั้ง 2 ครั้ง → ตารางยังมี **318 แถว** (ไม่เพิ่ม) |
 | ตั้ง Variable `simulate_down=banana` | `extract_banana` failed แต่ DAG รวม JIB ต่อจนจบ → สถานะ `partial` |
 | ตั้ง Variable `min_rows=1000` | `quality_check` แตกไปที่ `quarantine` ไม่มีการโหลด → สถานะ `quarantined` |

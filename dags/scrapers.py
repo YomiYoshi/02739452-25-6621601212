@@ -74,6 +74,8 @@ def guess_brand(name):
     while idx < len(words) and words[idx] in _PREFIX_WORDS:
         idx += 1
     rest = words[idx:]
+    if "SOUNDCORE" in rest[:3]:  # "Anker Soundcore ..." -> ให้ตรงกับร้านที่ใช้แบรนด์ SOUNDCORE
+        return "SOUNDCORE"
     for word in rest[:3]:
         if word in KNOWN_BRANDS:
             return word
@@ -177,6 +179,49 @@ def scrape_banana(max_pages=BANANA_MAX_PAGES):
                 "url": requests.compat.urljoin(BANANA_BASE, href),
             })
         logger.info("banana page=%s -> %d cards", page, len(cards))
+        if not cards:
+            break
+    return records
+
+
+# ---------------- Speed Computer (speedcom.co.th) ----------------
+# ใช้แทน Advice (Advice โหลดสินค้าผ่าน API ที่ต้องมี token จึงดึงด้วย requests+BS4 ไม่ได้)
+# Shopify collection "headphone" — 12 รายการต่อหน้า เปลี่ยนหน้าด้วย ?page=N (robots ห้ามแค่ sort_by)
+SPEEDCOM_COLLECTION_URL = "https://www.speedcom.co.th/collections/headphone"
+SPEEDCOM_MAX_PAGES = 12
+SPEEDCOM_BASE = "https://www.speedcom.co.th"
+# collection นี้มีหูฟังแบบมีสายปน -> เก็บเฉพาะชื่อที่บอกว่าไร้สาย
+_WIRELESS_HINT = re.compile(r"ไร้สาย|WIRELESS|TWS|BLUETOOTH|LIGHTSPEED", re.IGNORECASE)
+
+
+def scrape_speedcom(max_pages=SPEEDCOM_MAX_PAGES):
+    """ดึงหน้ารายการหูฟังของ Speed Computer (Shopify SSR)"""
+    records = []
+    for page in range(1, max_pages + 1):
+        url = f"{SPEEDCOM_COLLECTION_URL}?page={page}"
+        soup = BeautifulSoup(polite_get(url).text, "html.parser")
+        cards = soup.select("product-card.card--product")
+        for card in cards:
+            link = card.select_one("a[href*='/products/']")
+            title_el = card.select_one(".card__title")
+            price_el = card.select_one(".price__current")
+            if not (link and title_el and price_el):
+                continue
+            name = title_el.get_text(" ", strip=True)
+            if not _WIRELESS_HINT.search(name):
+                continue
+            href = link["href"].split("?")[0]
+            handle = href.rstrip("/").split("/products/")[-1]
+            amount = re.search(r"[\d,]+(?:\.\d+)?", price_el.get_text(" ", strip=True))
+            records.append({
+                "source": "speedcom",
+                "product_id": handle,
+                "name": name,
+                "brand": guess_brand(name),
+                "price": parse_price(amount.group(0)) if amount else None,
+                "url": requests.compat.urljoin(SPEEDCOM_BASE, f"/products/{handle}"),
+            })
+        logger.info("speedcom page=%s -> %d cards", page, len(cards))
         if not cards:
             break
     return records
