@@ -49,7 +49,7 @@ def filter_panel(df):
         c1, c2, c3 = st.columns([2, 3, 3])
         all_shops = sorted(df["shop"].unique())
         shops = c1.multiselect("ร้าน", all_shops, default=all_shops)
-        brands = c2.multiselect("แบรนด์ (ไม่เลือก = ทุกแบรนด์)", sorted(df["brand"].dropna().unique()))
+        brands = c2.multiselect("แบรนด์", sorted(df["brand"].dropna().unique()))
         lo, hi = c3.slider("ช่วงราคา (บาท)", 500, 5000, (500, 5000), step=100)
         keyword = st.text_input("ค้นหาชื่อรุ่น", placeholder="เช่น Buds, WH-CH520, Soundcore")
 
@@ -105,12 +105,22 @@ def page_prices():
                             labels={"price": "ราคา (บาท)", "shop": "ร้าน"})
         st.plotly_chart(fig2, use_container_width=True)
 
-    # รุ่นที่มีขายหลายร้าน -> เทียบราคา
+    # รุ่นที่มีขายหลายร้าน -> เทียบราคาครบทุกร้าน (JIB / Banana IT / Speed Computer)
     multi = df.groupby("match_key").filter(lambda g: g["source"].nunique() > 1) if not dedup else pd.DataFrame()
     if not multi.empty:
-        st.subheader(f"รุ่นที่พบในหลายร้าน ({multi['match_key'].nunique()} รุ่น) — เทียบราคา")
-        pivot = multi.pivot_table(index="match_key", columns="shop", values="price", aggfunc="min")
-        st.dataframe(pivot, use_container_width=True)
+        shops = list(SOURCE_LABELS.values())
+        st.subheader(f"รุ่นที่พบในหลายร้าน ({multi['match_key'].nunique()} รุ่น) — เทียบราคา {' · '.join(shops)}")
+        pivot = (multi.pivot_table(index="match_key", columns="shop", values="price", aggfunc="min")
+                 .reindex(columns=shops))  # แสดงทุกร้านเสมอ ร้านที่ไม่มีรุ่นนั้นเป็นช่องว่าง
+        pivot["ถูกสุดที่"] = pivot[shops].idxmin(axis=1)
+        pivot["ส่วนต่าง (บาท)"] = pivot[shops].max(axis=1) - pivot[shops].min(axis=1)
+        pivot.index = pivot.index.str.replace("|", " · ", regex=False)
+        for s in shops:  # ร้านที่ไม่มีรุ่นนั้นแสดง "–" แทนช่องว่าง/None
+            pivot[s] = pivot[s].map(lambda v: "–" if pd.isna(v) else f"฿{v:,.0f}")
+        st.dataframe(
+            pivot.rename_axis("รุ่น").reset_index(), use_container_width=True, hide_index=True,
+            column_config={"ส่วนต่าง (บาท)": st.column_config.NumberColumn("ส่วนต่าง (บาท)", format="%.0f")},
+        )
 
     # ---------- ตาราง ----------
     st.subheader(f"ตารางสินค้า ({len(view):,} รายการ)")
@@ -165,12 +175,9 @@ def page_status():
         st.info(f"อ่าน metadata ของ Airflow ไม่ได้ ({exc.__class__.__name__})")
 
 
-# ---------- ส่วนหัว: ชื่อ + ปุ่มรีเฟรช + เมนูแท็บ (อยู่บนหน้าหลักทั้งหมด) ----------
-head_left, head_right = st.columns([5, 1], vertical_alignment="center")
-head_left.title("🎧 วิเคราะห์และเปรียบเทียบราคาหูฟังไร้สาย (TWS / ครอบหู) 500–5,000 บาท")
-head_left.caption("แหล่งข้อมูล: JIB · Banana IT · Speed Computer — อ่านจาก PostgreSQL โดยตรง (cache 60 วินาที)")
-if head_right.button("🔄 รีเฟรชข้อมูล", use_container_width=True):
-    st.cache_data.clear()
+# ---------- ส่วนหัว: ชื่อ + เมนูแท็บ (อยู่บนหน้าหลักทั้งหมด) ----------
+st.title("🎧 วิเคราะห์และเปรียบเทียบราคาหูฟังไร้สาย (TWS / ครอบหู) 500–5,000 บาท")
+st.caption("แหล่งข้อมูล: JIB · Banana IT · Speed Computer — อ่านจาก PostgreSQL โดยตรง (cache 60 วินาที)")
 
 tab_prices, tab_status = st.tabs(["📊 ราคาหูฟัง", "⚙️ Pipeline Status"])
 with tab_prices:

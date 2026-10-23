@@ -87,26 +87,34 @@ _COLOR_WORDS = {
     "BEIGE", "NAVY", "YELLOW", "ORANGE", "BROWN", "CREAM", "MINT", "LAVENDER", "IVORY", "TITANIUM",
     "MIDNIGHT", "STARLIGHT", "SAND", "STONE", "ROSE", "DARK", "LIGHT", "SKY", "COLOR",
 }
-_GENERIC_WORDS = _PREFIX_WORDS | {"WITH", "MIC", "NOISE", "CANCELLING", "CANCELING", "ANC", "THE"}
+_GENERIC_WORDS = _PREFIX_WORDS | {
+    "WITH", "MIC", "NOISE", "CANCELLING", "CANCELING", "ANC", "THE", "OPEN", "EAR", "CLIP", "ON",
+    "ANKER",  # "Anker Soundcore ..." — แบรนด์ถูกรวมเป็น SOUNDCORE แล้ว
+}
+# คำบอกสเปกที่บางร้านต่อท้ายชื่อรุ่น เช่น Speed Computer: 'K20i 2Mic PT6/36Hr iPX5'
+_SPEC_TOKEN = re.compile(
+    r"\d+MIC|PT\d+(HR)?|\d+(\.\d+)?HR|BT\d(\.\d)?|\d+MM|\d+DB|IPX?\d+|SBC|BASSUP|\d+\+\d+H"
+)
 
 
 def make_match_key(brand, name):
-    """คีย์สำหรับจับคู่สินค้าข้ามร้าน: BRAND|รุ่น (ตัดวงเล็บ ภาษาไทย สี รหัสสินค้า และคำทั่วไป)
+    """คีย์สำหรับจับคู่สินค้าข้ามร้าน: BRAND|รุ่น (ตัดวงเล็บ ภาษาไทย สี รหัสสินค้า สเปก และคำทั่วไป)
 
-    เช่น JIB  'TRUE WIRELESS HEADPHONE (หูฟังทรูไวร์เลส) REDMI BUDS 6 PLAY (WHITE) (57676)'
-         Banana 'หูฟังไร้สาย Redmi Buds 6 Play'
-    -> 'REDMI|BUDS 6 PLAY' ทั้งคู่
+    เช่น JIB      'TRUE WIRELESS HEADPHONE (หูฟังทรูไวร์เลส) SOUNDCORE R50I NC (BLACK)'
+         Speedcom 'หูฟังไร้สาย Anker Soundcore R50i NC 4Mic PT10/45Hr iPX5'
+    -> 'SOUNDCORE|NC R50I' ทั้งคู่ (เรียงคำตามตัวอักษร ลำดับคำในชื่อจึงไม่มีผล เช่น 'Sleep A20' = 'A20 Sleep')
     """
     brand = (brand or "UNKNOWN").upper()
     text = re.sub(r"\([^)]*\)", " ", (name or "").upper())
     text = re.split(r"\s-\s", text)[0]  # ตัดส่วนท้าย ' - WHITE BHR08UHGL'
-    tokens = re.findall(r"[A-Z0-9][A-Z0-9+.]*", text)
+    tokens = re.findall(r"[A-Z0-9][A-Z0-9+.]*", text.replace("/", " "))
     model = [
         t for t in tokens
         if t != brand and t not in _GENERIC_WORDS and t not in _COLOR_WORDS
         and not re.fullmatch(r"\d{5,}", t)  # รหัสสินค้า/บาร์โค้ด
+        and not _SPEC_TOKEN.fullmatch(t)
     ]
-    return f"{brand}|{' '.join(model[:4])}"
+    return f"{brand}|{' '.join(sorted(dict.fromkeys(model[:4])))}"
 
 
 def scrape_jib_page(offset):

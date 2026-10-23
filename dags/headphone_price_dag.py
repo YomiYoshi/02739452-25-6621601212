@@ -62,7 +62,10 @@ def extract_jib(offset, **context):
     _check_simulated_down("jib")
     records = scrape_jib_page(offset)
     if not records:
-        raise ValueError(f"JIB offset={offset}: ไม่พบสินค้า — โครงสร้างเว็บอาจเปลี่ยน")
+        # หน้าแรกว่าง = เว็บผิดปกติ; หน้าถัดไปว่าง = สินค้าในหมวดมีไม่ถึงหน้านั้น (จบรายการ ไม่ใช่ error)
+        if offset == 0:
+            raise ValueError("JIB: หน้าแรกไม่พบสินค้า — โครงสร้างเว็บอาจเปลี่ยน")
+        logger.warning("extract_jib offset=%s: หน้าว่าง (สินค้าในหมวดมีไม่ถึงหน้านี้)", offset)
     logger.info("extract_jib offset=%s: %d rows", offset, len(records))
     return records
 
@@ -224,8 +227,18 @@ def load(**context):
 
 
 def refresh_dedup(**context):
-    """วิวตัดรายการซ้ำข้ามร้าน: รุ่นเดียวกัน (match_key) เก็บร้านที่ราคาถูกที่สุด"""
+    """คำนวณ match_key ใหม่ให้ทุกแถว แล้วสร้างวิวตัดรายการซ้ำข้ามร้าน (รุ่นเดียวกันเก็บร้านที่ถูกสุด)"""
     hook = PostgresHook(postgres_conn_id=POSTGRES_CONN_ID)
+    # แถวเก่าที่รอบนี้ไม่ได้ดึงซ้ำ (เช่น สินค้าหลุดจากหน้ารายการ) ก็ได้ key ตามกฎล่าสุดด้วย
+    rows = hook.get_records(f"SELECT source, product_id, brand, name FROM {TABLE};")
+    keys = [(make_match_key(brand, name), source, pid) for source, pid, brand, name in rows]
+    with hook.get_conn() as conn, conn.cursor() as cur:
+        execute_values(cur, f"""
+            UPDATE {TABLE} AS p SET match_key = v.match_key
+            FROM (VALUES %s) AS v(match_key, source, product_id)
+            WHERE p.source = v.source AND p.product_id = v.product_id
+              AND p.match_key IS DISTINCT FROM v.match_key;
+        """, keys)
     hook.run(f"""
         CREATE OR REPLACE VIEW products_dedup AS
         SELECT DISTINCT ON (match_key)
